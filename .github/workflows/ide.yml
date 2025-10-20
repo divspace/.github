@@ -1,0 +1,142 @@
+name: IDE
+
+on:
+  workflow_call:
+    inputs:
+      php:
+        default: '8.4'
+        type: string
+      mysql:
+        default: '8.4'
+        type: string
+
+env:
+  CACHE_STORE: array
+  COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
+  DB_CONNECTION: mysql
+  DB_HOST: 127.0.0.1
+  DB_DATABASE: laravel
+  DB_USERNAME: root
+  DB_PASSWORD: ''
+
+jobs:
+  ide-helper:
+    name: IDE Helper
+
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:${{ inputs.mysql }}
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: ${{ env.DB_DATABASE }}
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GH_ACTIONS_TOKEN }}
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php }}
+          tools: composer:v2
+          extensions: json, dom, curl, libxml, mbstring
+          coverage: none
+
+      - name: Copy environment file
+        run: |
+          if [ -f .env.example ]; then
+            echo "Copying .env.example to .env"
+            cp .env.example .env
+          fi
+
+      - name: Install Composer dependencies
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 5
+          command: composer install --no-interaction --no-progress --no-scripts
+
+      - name: Generate key
+        run: |
+          if [ -f artisan ]; then
+            echo "Generating application key"
+            php artisan key:generate
+          fi
+
+      - name: Run migrations
+        run: php artisan migrate --force
+
+      - name: Run IDE Helper for models
+        run: php artisan ide-helper:models -nRW
+
+      - name: Apply style fixes
+        run: |
+          if [ -f vendor/bin/pint ] && [ -d app/Models ]; then
+            vendor/bin/pint --parallel app/Models
+          fi
+
+      - name: Build commit message
+        run: |
+          echo "(ignore) Update model docblocks" > commit-message.txt
+          echo >> commit-message.txt
+          echo >> commit-message.txt
+          echo "skip-checks: true" >> commit-message.txt
+
+      - name: Set commit message
+        id: commit_message_ignore_step
+        run: |
+          echo 'commit_message<<EOF' >> $GITHUB_OUTPUT
+          cat commit-message.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Cleanup
+        run: rm -f commit-message.txt
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: ${{ steps.commit_message_ignore_step.outputs.commit_message }}
+          commit_user_name: ${{ vars.GH_ACTIONS_NAME }}
+          commit_user_email: ${{ vars.GH_ACTIONS_EMAIL }}
+          commit_author: "${{ vars.GH_ACTIONS_NAME }} <${{ vars.GH_ACTIONS_EMAIL }}>"
+          commit_options: --cleanup=verbatim
+
+      - name: Update ignore revisions file
+        run: |
+          git log --grep="^(ignore)" --pretty=format:"%H" --reverse > .git-blame-ignore-revs
+          echo >> .git-blame-ignore-revs
+
+      - name: Build commit message
+        run: |
+          echo "Add commits to ignore" > commit-message.txt
+          echo >> commit-message.txt
+          echo >> commit-message.txt
+          echo "skip-checks: true" >> commit-message.txt
+
+      - name: Set commit message
+        id: commit_message_add_step
+        run: |
+          echo 'commit_message<<EOF' >> $GITHUB_OUTPUT
+          cat commit-message.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Cleanup
+        run: rm -f commit-message.txt
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: ${{ steps.commit_message_add_step.outputs.commit_message }}
+          commit_user_name: ${{ vars.GH_ACTIONS_NAME }}
+          commit_user_email: ${{ vars.GH_ACTIONS_EMAIL }}
+          commit_author: "${{ vars.GH_ACTIONS_NAME }} <${{ vars.GH_ACTIONS_EMAIL }}>"
+          commit_options: --cleanup=verbatim

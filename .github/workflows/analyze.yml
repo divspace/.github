@@ -1,0 +1,66 @@
+name: Analyze
+
+on:
+  workflow_call:
+    inputs:
+      php:
+        default: '8.4'
+        type: string
+
+env:
+  CACHE_STORE: array
+  COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
+  DB_CONNECTION: sqlite
+  DB_DATABASE: database/database.sqlite
+
+jobs:
+  phpstan:
+    name: PHPStan
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Chec kout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Copy environment file
+        run: |
+          if [ -f .env.example ]; then
+            echo "Copying .env.example to .env"
+            cp .env.example .env
+          fi
+
+      - name: Create SQLite database
+        run: |
+          if [ -d database ]; then
+            echo "Creating SQLite database"
+            touch database/database.sqlite
+          fi
+
+      - name: Install Composer dependencies
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 5
+          command: composer install --no-interaction --no-progress --no-scripts
+
+      - name: Generate key
+        run: |
+          if [ -f artisan ]; then
+            echo "Generating application key"
+            php artisan key:generate
+          fi
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan --error-format=github
+
+permissions:
+  contents: read
+  packages: read

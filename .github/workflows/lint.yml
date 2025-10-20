@@ -1,0 +1,97 @@
+name: Lint
+
+on:
+  workflow_call:
+    inputs:
+      php:
+        default: '8.4'
+        type: string
+      fix:
+        default: true
+        type: boolean
+
+jobs:
+  lint:
+    name: Lint
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GH_ACTIONS_TOKEN }}
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php }}
+          tools: composer:v2
+          extensions: json, dom, curl, libxml, mbstring
+          coverage: none
+
+      - name: Install Pint
+        run: composer global require laravel/pint
+
+      - name: Run Pint
+        run: pint
+
+      - name: Build commit message
+        run: |
+          echo "(ignore) Apply style fixes" > commit-message.txt
+          echo >> commit-message.txt
+          echo >> commit-message.txt
+          echo "skip-checks: true" >> commit-message.txt
+
+      - name: Set commit message
+        id: commit_message_ignore_step
+        run: |
+          echo 'commit_message<<EOF' >> $GITHUB_OUTPUT
+          cat commit-message.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Cleanup
+        run: rm -f commit-message.txt
+
+      - name: Commit changes
+        if: ${{ inputs.fix }}
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: ${{ steps.commit_message_ignore_step.outputs.commit_message }}
+          commit_user_name: ${{ vars.GH_ACTIONS_NAME }}
+          commit_user_email: ${{ vars.GH_ACTIONS_EMAIL }}
+          commit_author: "${{ vars.GH_ACTIONS_NAME }} <${{ vars.GH_ACTIONS_EMAIL }}>"
+          commit_options: --cleanup=verbatim
+
+      - name: Update ignore revisions file
+        run: |
+          git log --grep="^(ignore)" --pretty=format:"%H" --reverse > .git-blame-ignore-revs
+          echo >> .git-blame-ignore-revs
+
+      - name: Build commit message
+        run: |
+          echo "Add commits to ignore" > commit-message.txt
+          echo >> commit-message.txt
+          echo >> commit-message.txt
+          echo "skip-checks: true" >> commit-message.txt
+
+      - name: Set commit message
+        id: commit_message_add_step
+        run: |
+          echo 'commit_message<<EOF' >> $GITHUB_OUTPUT
+          cat commit-message.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Cleanup
+        run: rm -f commit-message.txt
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: ${{ steps.commit_message_add_step.outputs.commit_message }}
+          commit_user_name: ${{ vars.GH_ACTIONS_NAME }}
+          commit_user_email: ${{ vars.GH_ACTIONS_EMAIL }}
+          commit_author: "${{ vars.GH_ACTIONS_NAME }} <${{ vars.GH_ACTIONS_EMAIL }}>"
+          commit_options: --cleanup=verbatim
